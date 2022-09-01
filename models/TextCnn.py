@@ -1,10 +1,10 @@
 import torch
-from torch import nn
+import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import os
-class Config():
 
+class Config():
     def __init__(self,DataPath,embedding=None):
         self.ModelName='FastText'
         self.TrainPath=os.path.join(DataPath,f'{self.ModelName}Data/train.txt')
@@ -32,35 +32,47 @@ class Config():
         self.SplitLevel='char' ##默认word
         self.Shuffle=True
         self.NVocab=0
+        self.FilterSizes=(2,3,4)
+        self.NumFilters=256
+
 
 class Model(nn.Module):
-
-
-    def __init__(self, config):
-
+    def __init__(self,config):
         super(Model, self).__init__()
         if config.EmbeddingPretrained is not None:
-            self.embedding = nn.Embedding.from_pretrained(config.EmbeddingPretrained, freeze=False)
+            self.embedding=nn.Embedding(config.EmbeddingPretrained,freeze=False)
         else:
-            self.embedding = nn.Embedding(config.NVocab, config.EmbeddingSize, padding_idx=config.NVocab - 1)
-        self.embedding_ngram2 = nn.Embedding(config.NGramVocab, config.EmbeddingSize)
-        self.embedding_ngram3 = nn.Embedding(config.NGramVocab, config.EmbeddingSize)
-        self.dropout = nn.Dropout(config.Dropout)
-        self.fc1 = nn.Linear(config.EmbeddingSize * 3, config.HiddenSize)
+            self.embedding=nn.Embedding(config.NVocab,config.EmbeddingSize,padding_idx=config.NVocab-1)
 
-        self.fc2 = nn.Linear(config.HiddenSize, config.ClassNum)
+        self.convs=nn.ModuleList(
+            [
+                nn.Conv2d(1,config.NumFilters,(kernel,config.Embeddingsize))
+                for kernel in config.FilterSizes
+            ]
+        )
+        self.dropout=nn.Dropout()
+        self.fc=nn.Linear(config.NumFilters*(len(config.FilterSizes)),config.ClassNum)
 
 
-    def forward(self, X):
+    def conv_and_pool(self,conv,X):
+        Y=F.relu(conv(X)).squeeze(3)
+        Y=F.max_pool1d(Y,Y.size(2)).squeeze(2)
+        return Y
 
 
-        out_word = self.embedding(X[0])
-        out_bigram = self.embedding_ngram2(X[1])
-        out_trigram = self.embedding_ngram3(X[2])
-        out = torch.cat((out_word, out_bigram, out_trigram), -1)
-        out = out.mean(dim=1)
-        out = self.dropout(out)
-        out = self.fc1(out)
-        out = F.relu(out)
-        out = self.fc2(out)
+    def forward(self,X):
+        X=self.embedding(X)
+        X=X.unsqueeze(1)
+        out=torch.cat([self.conv_and_pool(conv,X) for conv in self.convs],1)
+        out=self.dropout(out)
+        out=self.fc(out)
         return out
+
+
+
+
+
+
+
+
+
